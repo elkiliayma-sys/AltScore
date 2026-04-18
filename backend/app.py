@@ -8,7 +8,7 @@ import random
 app = Flask(__name__)
 CORS(app)
 
-client = MongoClient("mongodb://localhost:27017/")
+client = MongoClient("mongodb://192.168.208.1:27017/")
 db = client.AltScoreDB
 transactions = db.transactions
 
