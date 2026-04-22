@@ -1,12 +1,32 @@
 import numpy as np
 
 class DataCleaner:
-    def log_transform(self, x):
-        """Transformation Logarithmique pour flux financiers: ln(1+x) [cite: 90, 93]"""
-        return np.log1p(x)
+    """
+    Module de Prétraitement des Signaux (Section 1 du document technique)
+    Objectif : Normaliser des données hétérogènes pour le moteur Bayésien.
+    """
 
-    def z_score(self, x, mu, sigma):
-        """Standardisation Robuste: (x - mu) / sigma [cite: 96, 98]"""
-        if sigma < 1e-9: # Éviter division par zéro [cite: 102, 105]
-            return 0
-        return (x - mu) / sigma
+    def log_transform(self, x):
+        """
+        1.1 Transformation Logarithmique pour flux financiers
+        Formule : xt_tilde = ln(1 + xt)
+        """
+        if x < 0: return 0.0
+        return float(np.log1p(x)) # Utilise ln(1+x)
+
+    def calculate_z_score(self, x, history):
+        """
+        1.2 Standardisation Robuste pour données comportementales
+        Formule : z = (x - mu) / sigma
+        """
+        if not history or len(history) < 2:
+            return 0.0 
+
+        mu = np.mean(history)
+        sigma = np.std(history)
+
+        if sigma < 1e-9: 
+            return 0.0
+            
+        z = (x - mu) / sigma
+        return round(float(z), 4)

@@ -1,13 +1,37 @@
 import numpy as np
+from sklearn.decomposition import PCA
 
 class RiskAnalyzer:
+    def calculate_correlation_matrix(self, X):
+        if X.shape[0] < 2: 
+            return np.eye(X.shape[0])
+        return np.corrcoef(X)
+
+    def apply_pca_with_filtering(self, X):
+        N, T = X.shape
+        if T <= N:
+            return [], []
+            
+        q = T / N
+        pca = PCA()
+        pca.fit(X.T)
+        
+        eigenvalues = pca.explained_variance_
+        
+        sigma_sq = np.mean(eigenvalues)
+        lambda_plus = sigma_sq * (1 + (1/q) + 2*np.sqrt(1/q))
+
+        significant_eigenvalues = [ev for ev in eigenvalues if ev > lambda_plus]
+        return significant_eigenvalues, pca.components_
+
+    def generate_super_signal(self, X):
+        if X.shape[1] < 2: 
+            return X.flatten()
+        pca = PCA(n_components=1)
+        super_signal = pca.fit_transform(X.T)
+        return super_signal.flatten()
 
     def calculate_var_portfolio(self, pd_list: list, ead_list: list, lgd: float = 1.0, scenarios: int = 10000) -> float:
-        """
-        Monte Carlo simulation for Credit VaR 99%.
-        For each scenario: draw u ~ U[0,1] per client, default if u < PD,
-        loss = EAD * LGD. Return the 99th percentile of total losses.
-        """
         if not pd_list:
             return 0.0
 
