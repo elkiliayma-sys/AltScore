@@ -146,3 +146,17 @@ def lender_portfolio(lender_id):
         "funded_loans":      matches,
         "nb_loans":          len(matches)
     })
+
+
+# ════════════════════════════════════════════════════════════════
+# ROUTE 6 : Financements reçus par un emprunteur
+# ════════════════════════════════════════════════════════════════
+@lender_bp.route('/borrower/<borrower_id>/funded', methods=['GET'])
+def borrower_funded(borrower_id):
+    funded = db_manager.get_borrower_matches(borrower_id)
+    funded_confirmed = [f for f in funded if f.get('status') == 'FUNDED']
+    return jsonify({
+        "borrower_id":  borrower_id,
+        "funded_loans": funded_confirmed,
+        "nb_funded":    len(funded_confirmed)
+    })

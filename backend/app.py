@@ -1,16 +1,23 @@
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, session
 from flask_cors import CORS
 from datetime import datetime
+import secrets
 
 from core.scoring_engine import BayesianScorer
 from core.risk_analysis   import RiskAnalyzer
 from core.preprocessor    import DataCleaner
 from database.mongo_handler import MongoManager
 from routes.lender import lender_bp
+from routes.auth   import auth_bp
+from routes.rates  import rates_bp, calculate_rates   # ← nouveau
 
 app = Flask(__name__)
-CORS(app)
+app.secret_key = secrets.token_hex(32)
+CORS(app, supports_credentials=True)
+
 app.register_blueprint(lender_bp)
+app.register_blueprint(auth_bp)
+app.register_blueprint(rates_bp)   # ← nouveau
 
 db_manager = MongoManager()
 
@@ -32,12 +39,9 @@ cleaner       = DataCleaner()
 
 
 def get_decision(pd):
-    if pd < THRESHOLD_ACCEPT:
-        return {"label": "ACCEPT", "color": "green"}
-    elif pd < THRESHOLD_REVIEW:
-        return {"label": "REVIEW", "color": "orange"}
-    else:
-        return {"label": "REJECT", "color": "red"}
+    if pd < THRESHOLD_ACCEPT: return {"label": "ACCEPT", "color": "green"}
+    elif pd < THRESHOLD_REVIEW: return {"label": "REVIEW", "color": "orange"}
+    else: return {"label": "REJECT", "color": "red"}
 
 
 @app.route('/predict', methods=['POST'])
@@ -65,6 +69,7 @@ def predict():
     new_pd        = scorer.update_score(likelihood)
     expected_loss = new_pd * amount * current_lgd
     decision      = get_decision(new_pd)
+    rates         = calculate_rates(new_pd, amount)   # ← calcul des taux
 
     doc = {
         "client_id": client_id, "loan_type": loan_type,
@@ -76,6 +81,7 @@ def predict():
             "metier": data.get('metier'), "deja_credit": deja_credit
         },
         "lgd": current_lgd, "event_type": event_type,
+        "rates": rates,    # ← stocké en BDD
         "audit_trail": {
             "log_odds":      round(float(scorer.log_odds), 4),
             "expected_loss": round(float(expected_loss), 2),
@@ -84,7 +90,10 @@ def predict():
         "decision": decision["label"], "timestamp": datetime.now()
     }
     db_manager.save_transaction(doc)
-    return jsonify({"status": "success", "new_pd": round(new_pd * 100, 2), "decision": decision})
+    return jsonify({
+        "status": "success", "new_pd": round(new_pd * 100, 2),
+        "decision": decision, "rates": rates
+    })
 
 
 @app.route('/add-signal', methods=['POST'])
@@ -104,6 +113,7 @@ def add_custom_signal():
     amount      = last_doc.get('loan_amount', 0)
     current_lgd = last_doc.get('lgd', 1.0)
     decision    = get_decision(new_pd)
+    rates       = calculate_rates(new_pd, amount)
 
     doc = {
         "client_id": client_id,
@@ -112,6 +122,7 @@ def add_custom_signal():
         "likelihood_ratio": float(likelihood), "loan_amount": amount,
         "client_info": last_doc.get('client_info', {}),
         "lgd": current_lgd, "event_type": f"MANUEL: {event_type}",
+        "rates": rates,
         "audit_trail": {
             "log_odds":      round(float(scorer.log_odds), 4),
             "expected_loss": round(float(new_pd * amount * current_lgd), 2),
@@ -120,7 +131,7 @@ def add_custom_signal():
         "decision": decision["label"], "timestamp": datetime.now()
     }
     db_manager.save_transaction(doc)
-    return jsonify({"status": "success", "new_pd": round(new_pd * 100, 2), "message": "Signal ajouté"})
+    return jsonify({"status": "success", "new_pd": round(new_pd * 100, 2), "rates": rates})
 
 
 @app.route('/client', methods=['POST'])
@@ -142,6 +153,7 @@ def create_client():
     initial_pd  = max(0.01, min(0.99, initial_pd))
     current_lgd = LGD_MAP.get(loan_type, 1.0)
     scorer      = BayesianScorer(initial_pd)
+    rates       = calculate_rates(initial_pd, amount)
 
     doc = {
         "client_id": client_id, "loan_type": loan_type,
@@ -153,6 +165,7 @@ def create_client():
             "metier": data.get('metier'), "deja_credit": deja_credit
         },
         "lgd": current_lgd, "event_type": "Ouverture du dossier",
+        "rates": rates,
         "audit_trail": {
             "log_odds":      round(float(scorer.log_odds), 4),
             "expected_loss": round(float(initial_pd * amount * current_lgd), 2),
@@ -161,7 +174,11 @@ def create_client():
         "decision": get_decision(initial_pd)["label"], "timestamp": datetime.now()
     }
     db_manager.save_transaction(doc)
-    return jsonify({"status": "created", "client_id": client_id, "initial_pd": round(initial_pd * 100, 2)})
+    return jsonify({
+        "status": "created", "client_id": client_id,
+        "initial_pd": round(initial_pd * 100, 2),
+        "rates": rates
+    })
 
 
 @app.route('/portfolio-stats', methods=['GET'])
@@ -180,13 +197,20 @@ def get_stats():
     total_loans     = sum(c['loan_amount'] for c in clients_summary)
     circuit_breaker = current_var >= VAR_THRESHOLD
 
+    # Revenus plateforme total estimé
+    platform_revenue = sum(
+        c.get('rates', {}).get('gain_plateforme', 0)
+        for c in clients_summary
+    )
+
     return jsonify({
-        "history":         all_history_sorted[-100:],
-        "current_var":     round(current_var, 2),
-        "total_loans":     total_loans,
-        "threshold":       VAR_THRESHOLD,
-        "circuit_breaker": circuit_breaker,
-        "nb_clients":      len(clients_summary)
+        "history":          all_history_sorted[-100:],
+        "current_var":      round(current_var, 2),
+        "total_loans":      total_loans,
+        "threshold":        VAR_THRESHOLD,
+        "circuit_breaker":  circuit_breaker,
+        "nb_clients":       len(clients_summary),
+        "platform_revenue": round(platform_revenue, 2)
     })
 
 
