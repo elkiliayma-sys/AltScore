@@ -30,6 +30,17 @@ LGD_MAP = {
     "Etudiant":      0.90,
     "Professionnel": 0.70
 }
+
+# ── La plateforme décide du type de taux selon le produit ────────
+TAUX_TYPE_MAP = {
+    "Immobilier":    "compose",   # comme les vraies banques
+    "Automobile":    "compose",
+    "Professionnel": "compose",
+    "Consommation":  "simple",    # transparent pour petits montants
+    "Micro-credit":  "simple",
+    "Etudiant":      "simple",
+}
+
 VAR_THRESHOLD    = 500000
 THRESHOLD_ACCEPT = 0.15
 THRESHOLD_REVIEW = 0.30
@@ -53,7 +64,9 @@ def create_client():
     deja_credit = data.get('deja_credit', False)
     loan_type   = data.get('loan_type', 'Consommation')
     months      = int(data.get('months', 24))
-    type_taux   = data.get('type_taux', 'simple')
+
+    # La plateforme décide du type de taux
+    type_taux   = TAUX_TYPE_MAP.get(loan_type, "simple")
 
     if db_manager.get_history(client_id):
         return jsonify({"status": "exists", "message": f"{client_id} already exists."})
@@ -68,7 +81,6 @@ def create_client():
     rates       = calculate_rates(initial_pd, amount, months, type_taux)
     decision    = get_decision(initial_pd)
 
-    # ── Document transaction (historique signaux) ────────────────
     doc = {
         "client_id": client_id, "loan_type": loan_type,
         "probability_of_default": float(initial_pd),
@@ -89,23 +101,22 @@ def create_client():
     }
     db_manager.save_transaction(doc)
 
-    # ── Profil emprunteur enrichi (nouvelle collection borrowers) ─
     borrower_profile = {
-        "borrower_id":   client_id,
-        "loan_type":     loan_type,
-        "loan_amount":   amount,
-        "duree_mois":    months,
-        "type_taux":     type_taux,
-        "status":        decision["label"],   # ACCEPT / REVIEW / REJECT
-        "pd_initial":    round(initial_pd * 100, 2),
-        "taux_final":    rates["taux_total"],
-        "taux_preteur":  rates["taux_preteur"],
+        "borrower_id":     client_id,
+        "loan_type":       loan_type,
+        "loan_amount":     amount,
+        "duree_mois":      months,
+        "type_taux":       type_taux,   # défini par la plateforme
+        "status":          decision["label"],
+        "pd_initial":      round(initial_pd * 100, 2),
+        "taux_final":      rates["taux_total"],
+        "taux_preteur":    rates["taux_preteur"],
         "taux_plateforme": rates["taux_plateforme"],
-        "mensualite":    rates["mensualite"],
-        "cout_total":    rates["cout_total"],
-        "funded_by":     None,
-        "funded_amount": None,
-        "funded_at":     None,
+        "mensualite":      rates["mensualite"],
+        "cout_total":      rates["cout_total"],
+        "funded_by":       None,
+        "funded_amount":   None,
+        "funded_at":       None,
         "client_info": {
             "age": data.get('age'), "situation": data.get('situation'),
             "enfants": data.get('enfants', 0), "revenus": revenus,
@@ -119,6 +130,7 @@ def create_client():
         "status": "created", "client_id": client_id,
         "initial_pd": round(initial_pd * 100, 2),
         "decision": decision["label"],
+        "type_taux": type_taux,
         "rates": rates
     })
 
@@ -142,7 +154,9 @@ def predict():
     event_type  = data.get('event_type', 'Unknown event')
     loan_type   = data.get('loan_type', 'Consommation')
     months      = int(data.get('months', 24))
-    type_taux   = data.get('type_taux', 'simple')
+
+    # La plateforme décide du type de taux
+    type_taux   = TAUX_TYPE_MAP.get(loan_type, "simple")
 
     prior_pd = PRIOR_PD
     if revenus > 4000:   prior_pd -= 0.03
@@ -178,8 +192,6 @@ def predict():
         "decision": decision["label"], "timestamp": datetime.now()
     }
     db_manager.save_transaction(doc)
-
-    # Mettre à jour le statut dans borrowers
     db_manager.update_borrower_status(client_id, decision["label"])
 
     return jsonify({
@@ -204,14 +216,15 @@ def add_custom_signal():
     new_pd      = scorer.update_score(likelihood)
     amount      = last_doc.get('loan_amount', 0)
     current_lgd = last_doc.get('lgd', 1.0)
-    decision    = get_decision(new_pd)
+    loan_type   = last_doc.get('loan_type', 'Consommation')
     months      = last_doc.get('rates', {}).get('duree_mois', 24)
-    type_taux   = last_doc.get('rates', {}).get('type_taux', 'simple')
+    type_taux   = TAUX_TYPE_MAP.get(loan_type, "simple")
+    decision    = get_decision(new_pd)
     rates       = calculate_rates(new_pd, amount, months, type_taux)
 
     doc = {
         "client_id": client_id,
-        "loan_type": last_doc.get('loan_type', 'Consommation'),
+        "loan_type": loan_type,
         "probability_of_default": float(new_pd),
         "likelihood_ratio": float(likelihood), "loan_amount": amount,
         "client_info": last_doc.get('client_info', {}),

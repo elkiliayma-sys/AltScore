@@ -54,10 +54,10 @@ def calculate_rates(pd: float, amount: float, months: int = 24, type_taux: str =
     duration_key   = min(DURATION_PREMIUM.keys(), key=lambda k: abs(k - months))
     duration_extra = DURATION_PREMIUM[duration_key]
 
-    # Taux total brut
+    # Taux total brut 1 on additionne les taux 
     taux_total_raw = BASE_RATE + risk_premium + platform_fee + duration_extra
 
-    # Plafonnement légal
+    # Plafonnement légal 2 on choisi le plus petit entre le taux calculé et le taux d'usure
     taux_total     = min(taux_total_raw, MAX_RATE)
 
     # Si plafonné → réduire proportionnellement
@@ -65,8 +65,9 @@ def calculate_rates(pd: float, amount: float, months: int = 24, type_taux: str =
         ratio        = MAX_RATE / taux_total_raw
         platform_fee = platform_fee * ratio
         risk_premium = risk_premium * ratio
-
+    #3 le total moins notre commisssion 
     taux_preteur    = round(taux_total - platform_fee, 4)
+    
     taux_plateforme = round(platform_fee, 4)
     taux_total      = round(taux_total, 4)
 
