@@ -12,10 +12,8 @@ def register_lender():
     lender_id = data.get('lender_id')
     if not lender_id:
         return jsonify({"error": "lender_id obligatoire"}), 400
-
     if db_manager.get_lender(lender_id):
         return jsonify({"status": "exists", "message": f"{lender_id} existe deja."})
-
     doc = {
         "lender_id":         lender_id,
         "name":              data.get('name', lender_id),
@@ -26,9 +24,7 @@ def register_lender():
             "max_amount": float(data.get('max_amount', 5000)),
             "min_amount": float(data.get('min_amount', 500)),
         },
-        "total_lent":    0,
-        "active_loans":  0,
-        "timestamp":     datetime.now()
+        "total_lent": 0, "active_loans": 0, "timestamp": datetime.now()
     }
     db_manager.save_lender(doc)
     return jsonify({"status": "created", "lender_id": lender_id})
@@ -57,25 +53,19 @@ def match_borrower(borrower_id):
 
     for lender in all_lenders:
         prefs = lender.get('preferences', {})
-
-        # Criteres obligatoires
         if borrower_pd > lender['risk_tolerance']:        continue
         if lender['capital_available'] < borrower_amount: continue
         if borrower_amount > prefs.get('max_amount', float('inf')): continue
         if borrower_amount < prefs.get('min_amount', 0):            continue
 
-        # Score de compatibilite
         score   = 50
         reasons = []
-
         if borrower_type in prefs.get('loan_types', []):
             score += 30
-            reasons.append(f"Type '{borrower_type}' correspond aux preferences")
-
+            reasons.append(f"Type '{borrower_type}' correspond")
         margin = lender['risk_tolerance'] - borrower_pd
         score += int(margin * 100)
-        reasons.append(f"Marge de securite : {round(margin * 100, 1)}%")
-
+        reasons.append(f"Marge securite : {round(margin * 100, 1)}%")
         if lender.get('active_loans', 0) > 0:
             score += 10
             reasons.append("Preteur actif")
@@ -92,15 +82,10 @@ def match_borrower(borrower_id):
         })
 
     matches = sorted(matches, key=lambda x: x['compatibility_score'], reverse=True)
-
     return jsonify({
-        "borrower_id":       borrower_id,
-        "borrower_pd":       round(borrower_pd * 100, 2),
-        "borrower_decision": borrower_decision,
-        "loan_amount":       borrower_amount,
-        "loan_type":         borrower_type,
-        "matches":           matches,
-        "nb_matches":        len(matches)
+        "borrower_id": borrower_id, "borrower_pd": round(borrower_pd * 100, 2),
+        "borrower_decision": borrower_decision, "loan_amount": borrower_amount,
+        "loan_type": borrower_type, "matches": matches, "nb_matches": len(matches)
     })
 
 
@@ -128,35 +113,43 @@ def fund_borrower():
     db_manager.save_match(match_doc)
     db_manager.update_lender_capital(lender_id, amount)
 
+    # ← Mettre à jour le statut de l'emprunteur dans borrowers
+    db_manager.update_borrower_status(
+        borrower_id,
+        status="FUNDED",
+        funded_by=lender_id,
+        funded_amount=amount
+    )
+
     return jsonify({
-        "status":      "funded",
-        "lender_id":   lender_id,
-        "borrower_id": borrower_id,
-        "amount":      amount
+        "status": "funded", "lender_id": lender_id,
+        "borrower_id": borrower_id, "amount": amount
     })
 
 
 @lender_bp.route('/lender/<lender_id>/portfolio', methods=['GET'])
 def lender_portfolio(lender_id):
+    lender = db_manager.get_lender(lender_id)
+    
+    # Si le prêteur n'existe pas → 404
+    if not lender:
+        return jsonify({"error": "Preteur introuvable"}), 404
+    
     matches = db_manager.get_lender_matches(lender_id)
-    lender  = db_manager.get_lender(lender_id)
     return jsonify({
         "lender_id":         lender_id,
-        "capital_available": lender.get('capital_available', 0) if lender else 0,
+        "capital_available": lender.get('capital_available', 0),
         "funded_loans":      matches,
         "nb_loans":          len(matches)
     })
 
 
-# ════════════════════════════════════════════════════════════════
-# ROUTE 6 : Financements reçus par un emprunteur
-# ════════════════════════════════════════════════════════════════
 @lender_bp.route('/borrower/<borrower_id>/funded', methods=['GET'])
 def borrower_funded(borrower_id):
     funded = db_manager.get_borrower_matches(borrower_id)
     funded_confirmed = [f for f in funded if f.get('status') == 'FUNDED']
     return jsonify({
-        "borrower_id":  borrower_id,
+        "borrower_id": borrower_id,
         "funded_loans": funded_confirmed,
-        "nb_funded":    len(funded_confirmed)
+        "nb_funded": len(funded_confirmed)
     })
