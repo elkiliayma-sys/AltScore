@@ -31,7 +31,7 @@ class RiskAnalyzer:
         pca = PCA(n_components=1)
         super_signal = pca.fit_transform(X.T)
         return super_signal.flatten()
-
+ #Dans le pire des cas, combien la fintech peut perdre
     def calculate_var_portfolio(self, pd_list: list, ead_list: list, lgd: float = 1.0, scenarios: int = 10000) -> float:
         if not pd_list:
             return 0.0
